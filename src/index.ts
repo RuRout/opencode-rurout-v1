@@ -27,13 +27,18 @@ function baseURLFrom(opts: RuroutOptions): string {
   return raw.replace(/\/$/, "");
 }
 
+/** Keys pasted into /connect or a shell often carry trailing whitespace. */
+function normalizeKey(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 function providerApiKey(provider: AnyRecord | undefined): string {
   const options = (provider?.options ?? {}) as Record<string, unknown>;
   for (const field of ["apiKey", "api_key", "key", "token"] as const) {
-    const raw = options[field];
-    if (typeof raw === "string" && raw.length > 0) return raw;
+    const key = normalizeKey(options[field]);
+    if (key) return key;
   }
-  return process.env.RUROUT_API_KEY ?? "";
+  return normalizeKey(process.env.RUROUT_API_KEY);
 }
 
 function resolveApiKey(provider: AnyRecord | undefined): string {
@@ -139,6 +144,11 @@ function sanitizeLabel(raw: string): string {
 
 async function ruroutPlugin(input: PluginInput, rawOpts?: RuroutOptions): Promise<Hooks> {
   const baseURL = baseURLFrom(rawOpts ?? {});
+  // Last key seen by the auth loader (/connect) and by model discovery, so
+  // tools authenticate exactly like the provider does.
+  let connectedKey = "";
+  let discoveryKey = "";
+  const activeApiKey = () => connectedKey || discoveryKey || normalizeKey(process.env.RUROUT_API_KEY);
   const refreshTimer = setInterval(() => {
     void (async () => {
       try {
@@ -182,6 +192,7 @@ async function ruroutPlugin(input: PluginInput, rawOpts?: RuroutOptions): Promis
       await purgeLegacyFileCache((message) => void log(input, "info", message));
 
        const apiKey = resolveApiKey(provider);
+       discoveryKey = apiKey;
        if (!apiKey) {
          await log(input, "warn", "[rurout] no API key yet — run /connect rurout, then restart");
          return;
@@ -208,7 +219,7 @@ async function ruroutPlugin(input: PluginInput, rawOpts?: RuroutOptions): Promis
             },
           ],
           async authorize(inputs) {
-            const key = inputs?.api_key;
+            const key = normalizeKey(inputs?.api_key);
             if (!key) return { type: "failed" };
             return { type: "success", key };
           },
@@ -218,7 +229,11 @@ async function ruroutPlugin(input: PluginInput, rawOpts?: RuroutOptions): Promis
         try {
           const auth = await getAuth();
           if (!auth) return {};
-          if (auth.type === "api" && auth.key) return { apiKey: auth.key };
+          const key = auth.type === "api" ? normalizeKey(auth.key) : "";
+          if (key) {
+            connectedKey = key;
+            return { apiKey: key };
+          }
           return {};
         } catch {
           return {};
@@ -230,19 +245,23 @@ async function ruroutPlugin(input: PluginInput, rawOpts?: RuroutOptions): Promis
     },
     tool: {
       generate_image: tool({
-        description: "Generate an image using RuRout/Sub2API gateway (supports GPT-Image, Gemini Imagen, DALL-E) and save it locally.",
+        description: "Generate an image with a RuRout image model available for your key and save it locally.",
         args: {
           prompt: tool.schema.string().describe("Text description of the image to generate."),
-          model: tool.schema.string().optional().describe("Image generation model (e.g. 'gpt-image-2', 'gemini-3-pro-image', 'dall-e-3'). Default: 'gpt-image-2'."),
+          model: tool.schema.string().optional().describe("Image generation model (e.g. 'gpt-image-2', 'gemini-3.1-flash-image'; must be listed for your key). Default: 'gpt-image-2'."),
           size: tool.schema.string().optional().describe("Size, e.g. '1024x1024'."),
           output_path: tool.schema.string().optional().describe("Local path to save the generated image file."),
         },
         async execute(args) {
-          const authKey = process.env.RUROUT_API_KEY || "";
+          const authKey = activeApiKey();
+          if (!authKey) return "No RuRout API key: run /connect rurout first.";
           const model = args.model || "gpt-image-2";
           const size = args.size || "1024x1024";
           const prompt = args.prompt;
-          const outputPath = args.output_path || `image_${Date.now()}.png`;
+          const { mkdir, writeFile } = await import("node:fs/promises");
+          const { dirname, resolve } = await import("node:path");
+          // Relative paths are resolved against the project, not the server's cwd.
+          const outputPath = resolve(input.directory, args.output_path || `image_${Date.now()}.png`);
 
           const endpoint = baseURL.endsWith("/v1")
             ? `${baseURL}/images/generations`
@@ -266,7 +285,7 @@ async function ruroutPlugin(input: PluginInput, rawOpts?: RuroutOptions): Promis
           const data = (await res.json()) as any;
           const imgItem = data?.data?.[0];
           if (imgItem?.b64_json) {
-            const { writeFile } = await import("node:fs/promises");
+            await mkdir(dirname(outputPath), { recursive: true });
             await writeFile(outputPath, Buffer.from(imgItem.b64_json, "base64"));
             return `Image generated and saved to ${outputPath}`;
           }
