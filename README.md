@@ -49,9 +49,13 @@ opencode
 export RUROUT_BASE_URL=https://rurout.ru/v1
 ```
 
-The default is `https://rurout.ru/v1`. Existing installations using
-`https://rurout.online:9443/v1` may keep it via `RUROUT_BASE_URL`, which
-overrides the default.
+By default the plugin tries `https://rurout.ru/v1` and, if that address is
+unreachable (for example a VPN or network blocks the domain), falls back to
+`https://rurout.online/v1`; chat and image requests then use whichever address
+answered. Existing installations using `https://rurout.online:9443/v1` may keep
+it via `RUROUT_BASE_URL`. An explicit address (`RUROUT_BASE_URL` or a provider
+`baseURL` that is not one of the default domains) is used as-is, without
+failover.
 
 ## How it works
 

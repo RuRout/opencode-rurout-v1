@@ -1,11 +1,11 @@
 import type { AuthHook, Config, Hooks, PluginInput } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin/tool";
 import {
-  DEFAULT_BASE_URL,
+  DEFAULT_BASE_URLS,
   PROVIDER_ID,
   PROVIDER_NAME,
 } from "./constants.js";
-import { fetchGatewayModels } from "./discovery.js";
+import { fetchGatewayModelsFrom } from "./discovery.js";
 import { keyFingerprint, purgeLegacyFileCache } from "./cache.js";
 import {
   displayName,
@@ -22,9 +22,14 @@ interface RuroutOptions {
 
 type AnyRecord = Record<string, any>;
 
-function baseURLFrom(opts: RuroutOptions): string {
-  const raw = opts.baseURL ?? process.env.RUROUT_BASE_URL ?? DEFAULT_BASE_URL;
-  return raw.replace(/\/$/, "");
+/**
+ * An explicit address (plugin option or RUROUT_BASE_URL) is used as-is, with
+ * no failover. Without one, the default domains are tried in order.
+ */
+function baseURLsFrom(opts: RuroutOptions): string[] {
+  const explicit = opts.baseURL ?? process.env.RUROUT_BASE_URL;
+  if (explicit) return [explicit.replace(/\/$/, "")];
+  return DEFAULT_BASE_URLS;
 }
 
 /** Keys pasted into /connect or a shell often carry trailing whitespace. */
@@ -47,12 +52,13 @@ function resolveApiKey(provider: AnyRecord | undefined): string {
 
 async function buildModelsForKey(
   input: PluginInput,
-  baseURL: string,
+  baseURLs: string[],
   apiKey: string,
-): Promise<{ models: Record<string, AnyRecord>; keyLabel: string } | null> {
+): Promise<{ models: Record<string, AnyRecord>; keyLabel: string; baseURL: string } | null> {
   let live;
+  let baseURL: string;
   try {
-    live = await fetchGatewayModels(baseURL, apiKey);
+    ({ baseURL, models: live } = await fetchGatewayModelsFrom(baseURLs, apiKey));
   } catch (err) {
     await log(
       input,
@@ -76,7 +82,7 @@ async function buildModelsForKey(
     }
     models[entry.id] = model;
   }
-  return { models, keyLabel };
+  return { models, keyLabel, baseURL };
 }
 
 async function log(
@@ -143,7 +149,10 @@ function sanitizeLabel(raw: string): string {
 }
 
 async function ruroutPlugin(input: PluginInput, rawOpts?: RuroutOptions): Promise<Hooks> {
-  const baseURL = baseURLFrom(rawOpts ?? {});
+  const baseURLs = baseURLsFrom(rawOpts ?? {});
+  // Follows the address that answered discovery, so the image tool uses the
+  // same reachable domain as the provider.
+  let baseURL = baseURLs[0];
   // Last key seen by the auth loader (/connect) and by model discovery, so
   // tools authenticate exactly like the provider does.
   let connectedKey = "";
@@ -177,9 +186,16 @@ async function ruroutPlugin(input: PluginInput, rawOpts?: RuroutOptions): Promis
       root.provider = root.provider ?? {};
       const existing = (root.provider[PROVIDER_ID] ?? {}) as AnyRecord;
       const options = { ...((existing.options ?? {}) as Record<string, unknown>) };
-      if (typeof options.baseURL !== "string" || options.baseURL.length === 0) {
-        options.baseURL = baseURL;
-      }
+      // A provider baseURL from the user's config is an explicit address and
+      // disables failover. The default domains are not: OpenCode hands the
+      // address we set on a previous run back to us, and it must stay free to
+      // move to the other default domain.
+      const configured =
+        typeof options.baseURL === "string" ? options.baseURL.replace(/\/$/, "") : "";
+      const candidates =
+        configured && !DEFAULT_BASE_URLS.includes(configured) ? [configured] : baseURLs;
+      options.baseURL = candidates[0];
+      baseURL = candidates[0];
       const provider: AnyRecord = {
         ...existing,
         npm: "@ai-sdk/openai-compatible",
@@ -197,8 +213,13 @@ async function ruroutPlugin(input: PluginInput, rawOpts?: RuroutOptions): Promis
          await log(input, "warn", "[rurout] no API key yet — run /connect rurout, then restart");
          return;
        }
-       const built = await buildModelsForKey(input, baseURL, apiKey);
+       const built = await buildModelsForKey(input, candidates, apiKey);
        if (!built) return;
+       if (built.baseURL !== options.baseURL) {
+         await log(input, "info", `[rurout] gateway address switched to ${built.baseURL}`);
+       }
+       options.baseURL = built.baseURL;
+       baseURL = built.baseURL;
        provider.name = built.keyLabel ? `RuRout ${built.keyLabel}` : PROVIDER_NAME;
        provider.models = built.models;
        await log(input, "info", `[rurout] discovered ${Object.keys(built.models).length} models for active key ${keyFingerprint(apiKey)}`);
