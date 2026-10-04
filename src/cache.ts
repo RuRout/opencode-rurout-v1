@@ -1,14 +1,9 @@
-import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 export const LEGACY_FILE_CACHE_DIR = join(homedir(), ".cache", "opencode-rurout");
 export const LEGACY_FILE_CACHE_PATTERN = /^models-[0-9a-f]+\.json$/i;
-
-export function keyFingerprint(apiKey: string): string {
-  return createHash("sha256").update(apiKey, "utf8").digest("hex").slice(0, 12);
-}
 
 export async function purgeLegacyFileCache(log?: (message: string) => void): Promise<number> {
   let removed = 0;
