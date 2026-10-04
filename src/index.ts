@@ -6,7 +6,7 @@ import {
   PROVIDER_NAME,
 } from "./constants.js";
 import { fetchGatewayModelsFrom } from "./discovery.js";
-import { keyFingerprint, purgeLegacyFileCache } from "./cache.js";
+import { purgeLegacyFileCache } from "./cache.js";
 import {
   displayName,
   familyOf,
@@ -63,7 +63,7 @@ async function buildModelsForKey(
     await log(
       input,
       "warn",
-      `[rurout] model discovery failed for key ${keyFingerprint(apiKey)}: ${err instanceof Error ? err.message : String(err)}`,
+      `[rurout] model discovery failed: ${err instanceof Error ? err.message : String(err)}`,
     );
     return null;
   }
@@ -222,7 +222,7 @@ async function ruroutPlugin(input: PluginInput, rawOpts?: RuroutOptions): Promis
        baseURL = built.baseURL;
        provider.name = built.keyLabel ? `RuRout ${built.keyLabel}` : PROVIDER_NAME;
        provider.models = built.models;
-       await log(input, "info", `[rurout] discovered ${Object.keys(built.models).length} models for active key ${keyFingerprint(apiKey)}`);
+       await log(input, "info", `[rurout] discovered ${Object.keys(built.models).length} models`);
     },
 
     auth: {
