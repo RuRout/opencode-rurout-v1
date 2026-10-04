@@ -51,6 +51,10 @@ opencode
 
 Or `export RUROUT_BASE_URL=...`.
 
+The default is `https://rurout.ru/v1`. Existing installations using
+`https://rurout.online:9443/v1` may keep their explicit `baseURL` or
+`RUROUT_BASE_URL`; these override the default.
+
 ## How it works
 
 The v1 `config` hook registers the `rurout` provider with `@ai-sdk/openai-compatible`, fetches `GET /v1/models` with the active key, preserves the exact IDs returned by the gateway, and fills in context/pricing metadata. The `auth` hook adds `/connect rurout`.

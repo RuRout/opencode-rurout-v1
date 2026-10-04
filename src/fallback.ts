@@ -51,13 +51,17 @@ const TABLE: Record<string, FallbackSpec> = {
   "gpt-5.6-luna": spec(1050000, 128000, 0.2, 1.2),
   "gpt-5.6-sol": spec(1050000, 128000, 5, 30),
   "gpt-5.6-terra": spec(1050000, 128000, 2, 12),
-  "gpt-6": spec(1050000, 128000, 5, 30),
-  "gpt-6-astra": spec(1050000, 128000, 5, 30),
+  "gpt-6": spec(1050000, 128000, 10, 50, 1),
+  "gpt-6-astra": spec(1050000, 128000, 10, 50, 1),
+  "gpt-6.1-sol": spec(1050000, 128000, 2, 10, 0.1),
+  "gpt-6-sol": spec(1050000, 128000, 2, 10, 0.2),
+  "gpt-6-luna": spec(128000, 128000, 0.1, 0.5, 0.01),
   "gpt-image-1": spec(131072, 32000, 5, 10),
   "gpt-image-1.5": spec(131072, 32000, 5, 10),
   "gpt-image-2": spec(131072, 32000, 5, 10),
   "gpt-image-2.5-flare": spec(131072, 32000, 5, 10),
   "gpt-image-2.5-sunburst": spec(131072, 32000, 5, 10),
+  "dall-e-3": spec(32768, 8192, 5, 40),
 };
 
 const SUFFIX = /-(thinking|preview|high|medium|low|tiered)$/;
@@ -113,7 +117,20 @@ export function modelLabel(canonical: string): string {
 }
 
 export function isImage(id: string): boolean {
-  return id.includes("image");
+  return id.includes("image") || id.startsWith("dall-e");
+}
+
+export function supportsVision(id: string): boolean {
+  // Pure image generation output models don't take general vision prompts in normal chat
+  if (id.startsWith("gpt-image-") || id.startsWith("dall-e-")) {
+    return false;
+  }
+  // Modern frontier families support vision input (Claude 3+, GPT-4/5/6+, Gemini, etc.)
+  if (id.startsWith("claude-") || id.startsWith("gpt-") || id.startsWith("gemini-") || id.startsWith("o1") || id.startsWith("o3") || id.startsWith("o4")) {
+    return true;
+  }
+  // By default, if the model has image in the name (e.g. multimodal models), allow vision
+  return isImage(id);
 }
 
 export function displayName(id: string, display?: string): string {

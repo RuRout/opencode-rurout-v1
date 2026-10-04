@@ -1,4 +1,5 @@
 import type { AuthHook, Config, Hooks, PluginInput } from "@opencode-ai/plugin";
+import { tool } from "@opencode-ai/plugin/tool";
 import {
   DEFAULT_BASE_URL,
   PROVIDER_ID,
@@ -12,6 +13,7 @@ import {
   isImage,
   isReasoning,
   lookup,
+  supportsVision,
 } from "./fallback.js";
 
 interface RuroutOptions {
@@ -87,14 +89,15 @@ async function log(
 function toV1Model(canonical: string, apiId: string, display: string | undefined): AnyRecord {
   const fallback = lookup(canonical);
   const image = isImage(canonical);
-  const text = !canonical.startsWith("gpt-image-");
+  const text = !canonical.startsWith("gpt-image-") && !canonical.startsWith("dall-e-");
+  const vision = supportsVision(canonical);
   const label = displayName(apiId, display);
   return {
     name: label.startsWith("RuRout") ? label : `RuRout ${label}`,
     family: familyOf(canonical),
     reasoning: isReasoning(apiId),
     tool_call: !image && text,
-    attachment: image,
+    attachment: vision,
     cost: {
       input: fallback.input > 0 ? fallback.input : 1,
       output: fallback.outputCost > 0 ? fallback.outputCost : 5,
@@ -224,6 +227,52 @@ async function ruroutPlugin(input: PluginInput, rawOpts?: RuroutOptions): Promis
     } satisfies AuthHook,
     dispose: async () => {
       clearInterval(refreshTimer);
+    },
+    tool: {
+      generate_image: tool({
+        description: "Generate an image using RuRout/Sub2API gateway (supports GPT-Image, Gemini Imagen, DALL-E) and save it locally.",
+        args: {
+          prompt: tool.schema.string().describe("Text description of the image to generate."),
+          model: tool.schema.string().optional().describe("Image generation model (e.g. 'gpt-image-2', 'gemini-3-pro-image', 'dall-e-3'). Default: 'gpt-image-2'."),
+          size: tool.schema.string().optional().describe("Size, e.g. '1024x1024'."),
+          output_path: tool.schema.string().optional().describe("Local path to save the generated image file."),
+        },
+        async execute(args) {
+          const authKey = process.env.RUROUT_API_KEY || "";
+          const model = args.model || "gpt-image-2";
+          const size = args.size || "1024x1024";
+          const prompt = args.prompt;
+          const outputPath = args.output_path || `image_${Date.now()}.png`;
+
+          const endpoint = baseURL.endsWith("/v1")
+            ? `${baseURL}/images/generations`
+            : `${baseURL}/v1/images/generations`;
+          const res = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${authKey}`,
+            },
+            body: JSON.stringify({
+              model,
+              prompt,
+              size,
+              response_format: "b64_json",
+            }),
+          });
+          if (!res.ok) {
+            return `Image generation failed (${res.status}): ${await res.text()}`;
+          }
+          const data = (await res.json()) as any;
+          const imgItem = data?.data?.[0];
+          if (imgItem?.b64_json) {
+            const { writeFile } = await import("node:fs/promises");
+            await writeFile(outputPath, Buffer.from(imgItem.b64_json, "base64"));
+            return `Image generated and saved to ${outputPath}`;
+          }
+          return `Image generation result: ${JSON.stringify(imgItem)}`;
+        },
+      }),
     },
   };
 }
