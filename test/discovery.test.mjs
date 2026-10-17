@@ -56,3 +56,14 @@ test("reports the last error when every address is unreachable", async () => {
   mockFetch({ "https://rurout.ru": unreachable, "https://rurout.online": unreachable });
   await assert.rejects(fetchGatewayModelsFrom([RU, ONLINE], "k"), /rurout\.online.*fetch failed/);
 });
+
+test("preserves API metadata and exact IDs, including unknown variants", async () => {
+  const entries = [
+    { id: "vendor/new-preview-high", name: "Exact-preview-high", context_window: 876543,
+      supports_tools: false, pricing: { currency: "USD", unit: "per_token", input_price: 0 } },
+    { id: "vendor/new-preview-low", display_name: "Exact Low" },
+  ];
+  mockFetch({ "https://rurout.ru": () => new Response(JSON.stringify({ data: [...entries, null, {}, { id: 42 }, { id: "" }] })) });
+  const res = await fetchGatewayModelsFrom([RU], "k");
+  assert.deepEqual(res.models, entries);
+});

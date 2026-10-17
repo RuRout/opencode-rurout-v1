@@ -7,14 +7,8 @@ import {
 } from "./constants.js";
 import { fetchGatewayModelsFrom } from "./discovery.js";
 import { purgeLegacyFileCache } from "./cache.js";
-import {
-  displayName,
-  familyOf,
-  isImage,
-  isReasoning,
-  lookup,
-  supportsVision,
-} from "./fallback.js";
+import { toV1Models } from "./model.js";
+import { normalizeKey, providerApiKey, resolveApiKey } from "./auth.js";
 
 interface RuroutOptions {
   baseURL?: string;
@@ -30,24 +24,6 @@ function baseURLsFrom(opts: RuroutOptions): string[] {
   const explicit = opts.baseURL ?? process.env.RUROUT_BASE_URL;
   if (explicit) return [explicit.replace(/\/$/, "")];
   return DEFAULT_BASE_URLS;
-}
-
-/** Keys pasted into /connect or a shell often carry trailing whitespace. */
-function normalizeKey(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function providerApiKey(provider: AnyRecord | undefined): string {
-  const options = (provider?.options ?? {}) as Record<string, unknown>;
-  for (const field of ["apiKey", "api_key", "key", "token"] as const) {
-    const key = normalizeKey(options[field]);
-    if (key) return key;
-  }
-  return normalizeKey(process.env.RUROUT_API_KEY);
-}
-
-function resolveApiKey(provider: AnyRecord | undefined): string {
-  return providerApiKey(provider);
 }
 
 async function buildModelsForKey(
@@ -69,19 +45,7 @@ async function buildModelsForKey(
   }
 
   const keyLabel = await fetchKeyLabel(baseURL, apiKey);
-  const models: Record<string, AnyRecord> = {};
-  for (const entry of live) {
-    // Preserve the exact ID returned for this key. Alias collapsing can select
-    // an ID unavailable to the active key.
-    const model = toV1Model(entry.id, entry.id, entry.display_name) as AnyRecord;
-    const modelName = typeof model.name === "string" ? model.name : entry.id;
-    if (keyLabel) {
-      model.name = `RuRout ${keyLabel} ${displayName(entry.id, entry.display_name)}`;
-    } else {
-      model.name = modelName;
-    }
-    models[entry.id] = model;
-  }
+  const models = toV1Models(live);
   return { models, keyLabel, baseURL };
 }
 
@@ -95,27 +59,6 @@ async function log(
   } catch {
     // Logging is best-effort.
   }
-}
-
-function toV1Model(canonical: string, apiId: string, display: string | undefined): AnyRecord {
-  const fallback = lookup(canonical);
-  const image = isImage(canonical);
-  const text = !canonical.startsWith("gpt-image-") && !canonical.startsWith("dall-e-");
-  const vision = supportsVision(canonical);
-  const label = displayName(apiId, display);
-  return {
-    name: label.startsWith("RuRout") ? label : `RuRout ${label}`,
-    family: familyOf(canonical),
-    reasoning: isReasoning(apiId),
-    tool_call: !image && text,
-    attachment: vision,
-    cost: {
-      input: fallback.input > 0 ? fallback.input : 1,
-      output: fallback.outputCost > 0 ? fallback.outputCost : 5,
-      cache_read: fallback.cacheRead ?? 0,
-    },
-    limit: { context: fallback.context, output: fallback.output },
-  };
 }
 
 async function fetchKeyLabel(baseURL: string, apiKey: string): Promise<string> {
@@ -157,29 +100,7 @@ async function ruroutPlugin(input: PluginInput, rawOpts?: RuroutOptions): Promis
   // tools authenticate exactly like the provider does.
   let connectedKey = "";
   let discoveryKey = "";
-  const activeApiKey = () => connectedKey || discoveryKey || normalizeKey(process.env.RUROUT_API_KEY);
-  const refreshTimer = setInterval(() => {
-    void (async () => {
-      try {
-        // Reapply the running configuration so the config hook resolves the
-        // current auth key and replaces the model inventory without a restart.
-        const response = await (input.client.config.get as any)({
-          query: { directory: input.directory },
-        });
-        const config = (response as AnyRecord)?.data ?? response;
-        if (!config || typeof config !== "object") return;
-        await (input.client.config.update as any)({
-          query: { directory: input.directory },
-          body: config,
-        });
-      } catch {
-        // The next hourly tick retries; keep the last successful inventory.
-      }
-    })();
-  }, 60 * 60 * 1000);
-  if (typeof (refreshTimer as unknown as { unref?: () => void }).unref === "function") {
-    (refreshTimer as unknown as { unref: () => void }).unref();
-  }
+  const activeApiKey = () => discoveryKey || connectedKey || normalizeKey(process.env.RUROUT_API_KEY);
   return {
     async config(config: Config) {
       const root = config as AnyRecord;
@@ -207,22 +128,24 @@ async function ruroutPlugin(input: PluginInput, rawOpts?: RuroutOptions): Promis
 
       await purgeLegacyFileCache((message) => void log(input, "info", message));
 
-       const apiKey = resolveApiKey(provider);
-       discoveryKey = apiKey;
-       if (!apiKey) {
-         await log(input, "warn", "[rurout] no API key yet — run /connect rurout, then restart");
-         return;
-       }
-       const built = await buildModelsForKey(input, candidates, apiKey);
-       if (!built) return;
-       if (built.baseURL !== options.baseURL) {
-         await log(input, "info", `[rurout] gateway address switched to ${built.baseURL}`);
-       }
-       options.baseURL = built.baseURL;
-       baseURL = built.baseURL;
-       provider.name = built.keyLabel ? `RuRout ${built.keyLabel}` : PROVIDER_NAME;
-       provider.models = built.models;
-       await log(input, "info", `[rurout] discovered ${Object.keys(built.models).length} models`);
+      const apiKey = await resolveApiKey(provider);
+      discoveryKey = apiKey;
+      if (!apiKey) {
+        await log(input, "warn", "[rurout] no API key yet — run /connect rurout, then restart");
+        return;
+      }
+      // Keep discovery, chat and tools on the same resolved credential.
+      options.apiKey = apiKey;
+      const built = await buildModelsForKey(input, candidates, apiKey);
+      if (!built) return;
+      if (built.baseURL !== options.baseURL) {
+        await log(input, "info", `[rurout] gateway address switched to ${built.baseURL}`);
+      }
+      options.baseURL = built.baseURL;
+      baseURL = built.baseURL;
+      provider.name = built.keyLabel ? `RuRout ${built.keyLabel}` : PROVIDER_NAME;
+      provider.models = built.models;
+      await log(input, "info", `[rurout] discovered ${Object.keys(built.models).length} models`);
     },
 
     auth: {
@@ -246,11 +169,12 @@ async function ruroutPlugin(input: PluginInput, rawOpts?: RuroutOptions): Promis
           },
         },
       ],
-      loader: async (getAuth) => {
+      loader: async (getAuth, provider) => {
         try {
           const auth = await getAuth();
-          if (!auth) return {};
-          const key = auth.type === "api" ? normalizeKey(auth.key) : "";
+          const key = providerApiKey(provider)
+            || (auth?.type === "api" ? normalizeKey(auth.key) : "")
+            || normalizeKey(process.env.RUROUT_API_KEY);
           if (key) {
             connectedKey = key;
             return { apiKey: key };
@@ -261,9 +185,6 @@ async function ruroutPlugin(input: PluginInput, rawOpts?: RuroutOptions): Promis
         }
       },
     } satisfies AuthHook,
-    dispose: async () => {
-      clearInterval(refreshTimer);
-    },
     tool: {
       generate_image: tool({
         description: "Generate an image with a RuRout image model available for your key and save it locally.",

@@ -4,7 +4,21 @@ const AUTH_ERROR_PREFIX = "gateway rejected the API key";
 
 export interface GatewayModel {
   id: string;
-  display_name?: string;
+  // Metadata is untrusted JSON; each field is validated independently by the adapter.
+  display_name?: unknown;
+  name?: unknown;
+  context_window?: unknown;
+  context_length?: unknown;
+  max_context_length?: unknown;
+  max_input_tokens?: unknown;
+  max_output_tokens?: unknown;
+  limit?: unknown;
+  reasoning?: unknown;
+  supports_tools?: unknown;
+  input_modalities?: unknown;
+  output_modalities?: unknown;
+  supported_reasoning_levels?: unknown;
+  pricing?: unknown;
   created_at?: string;
 }
 
