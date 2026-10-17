@@ -14,10 +14,41 @@ OpenCode **1.x** provider plugin for [RuRout](https://rurout.ru) — your gatewa
 
 ## Install (OpenCode 1.x only)
 
-Status: **under verification**. The RuRout installer (`install.sh`) does not
-install this plugin yet, because loading a multi-file plugin with its
-`@opencode-ai/plugin` dependency from the global plugins directory has not been
-confirmed on a live OpenCode 1.x. The release archive is published for testing:
+### Windows (PowerShell)
+
+The intended one-line installer command for the standalone V1 release is:
+
+```powershell
+& ([scriptblock]::Create((New-Object Net.WebClient).DownloadString('https://rurout.ru/install.ps1'))) -Cli opencode1
+```
+
+This command is the installer integration target, not a claim that this source
+revision or its archive is already published. Native Windows loading and live
+model requests have not been verified by the bundle checks. A real V1 loader
+smoke test and publication of the matching archive/installer are separate release
+steps.
+
+The installer uses this layout inside the OpenCode config directory:
+
+```text
+plugins/
+  rurout-connect.js             # export { default } from './rurout-connect/index.js';
+  rurout-connect/
+    index.js                   # standalone ESM bundle
+    package.json               # type: module; no dependencies
+```
+
+V1 auto-loads `plugins/*.{js,ts}`, not nested directories. The top-level wrapper
+is therefore required; the nested bundle is not a second plugin entrypoint.
+`@opencode-ai/plugin/tool` and Zod are bundled into `index.js`: installation does
+not require npm/Bun to resolve those packages or install plugin dependencies.
+This does not change OpenCode's own provider SDK requirements.
+
+### macOS / Linux (archive only)
+
+Status: **under verification**. The shell installer (`install.sh --cli opencode1`)
+is not supported yet. Release archives are available for manual testing; use
+the layout above rather than unpacking only into a nested directory:
 
 ```sh
 curl -fsSLO https://rurout.ru/downloads/connect/rurout-opencode-v1-<version>.tar.gz
@@ -25,8 +56,9 @@ curl -fsSL https://rurout.ru/downloads/connect/SHA256SUMS | grep rurout-opencode
 shasum -a 256 rurout-opencode-v1-<version>.tar.gz   # must match the line above
 ```
 
-No npm package is published. When OpenCode 1.x support is released it will be
-installed with `curl -fsSL https://rurout.ru/install.sh | sh -s -- --cli opencode1`.
+No npm package is published. The future shell installation command is
+`curl -fsSL https://rurout.ru/install.sh | sh -s -- --cli opencode1`; it is not
+currently an installation method for V1.
 
 Once the plugin is loaded, inside OpenCode:
 
@@ -66,10 +98,20 @@ The v1 `config` hook registers the `rurout` provider with `@ai-sdk/openai-compat
 ```sh
 npm ci && npm run build
 npm run release:pack   # writes release/rurout-opencode-v1-<version>.tar.gz and prints its sha256
-npm run release:test   # builds twice and fails if the sha256 differs
+npm run release:test   # packs twice, checks sha256, imports an isolated installation
 ```
 
 The archive is deterministic (sorted names, fixed mtime/owner/mode, `gzip -n`):
 the same commit and toolchain always give the same sha256. It holds
-`dist/*.js` and a minimal `package.json` that declares the `@opencode-ai/plugin`
-dependency.
+only the standalone `dist/index.js` bundle and a minimal `package.json` with no
+runtime dependencies. The build runs TypeScript first (including declarations
+and the separate modules used by unit tests), then esbuild replaces
+`dist/index.js` with an ESM bundle targeting Node 20. Node builtins stay external.
+Declarations, other compiled modules and build metadata are not shipped.
+
+`release:test` also checks that the bundle includes the tool helper and Zod and
+has no external imports other than Node builtins. It extracts the archive
+outside the repository, adds the auto-loader wrapper, rejects external package
+resolution and imports the plugin with only a default function export. The
+offline check exercises tool schema construction without making gateway/model
+requests; it is not a live Windows or OpenCode loader test.

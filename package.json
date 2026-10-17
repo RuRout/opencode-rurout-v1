@@ -1,6 +1,6 @@
 {
   "name": "@rurout/opencode-v1",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "description": "OpenCode 1.x provider plugin for RuRout — live model discovery from your gateway key.",
   "author": "rurout",
@@ -27,7 +27,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/index.js --metafile=dist/bundle-meta.json",
     "test": "node --test test/*.test.mjs",
     "release:pack": "sh scripts/pack.sh",
     "release:test": "sh scripts/test-pack.sh"
@@ -38,6 +38,7 @@
   "devDependencies": {
     "@opencode-ai/sdk": "^1.18.31",
     "@types/node": "^22.0.0",
+    "esbuild": "0.25.12",
     "typescript": "^5.9.3"
   }
 }

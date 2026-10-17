@@ -4,8 +4,9 @@
 # Usage: scripts/pack.sh [output-dir]      (default output-dir: release)
 #
 # Run `npm ci && npm run build` first. The archive holds the compiled plugin
-# (dist/*.js) plus a minimal runtime package.json at its root, which is the
-# layout the RuRout installer unpacks into the OpenCode plugins directory.
+# (dist/index.js, including runtime dependencies) plus a minimal package.json
+# at its root. The installer unpacks it into plugins/rurout-connect/ and adds
+# plugins/rurout-connect.js as the auto-loader entrypoint.
 # The archive is byte-reproducible for a given toolchain: sorted names, fixed
 # mtime/owner/mode and `gzip -n`. The sha256 is printed on the last line.
 set -eu
@@ -28,11 +29,10 @@ trap 'rm -rf "$stage"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-cp dist/*.js "$stage/"
+cp dist/index.js "$stage/"
 PLUGIN_NAME=$PLUGIN_NAME node -e '
 const pkg = require("./package.json");
 const out = { name: process.env.PLUGIN_NAME, version: pkg.version, type: "module", main: "index.js" };
-if (pkg.dependencies && Object.keys(pkg.dependencies).length > 0) out.dependencies = pkg.dependencies;
 process.stdout.write(JSON.stringify(out) + "\n");
 ' > "$stage/package.json"
 
