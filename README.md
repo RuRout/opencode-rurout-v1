@@ -8,9 +8,9 @@ OpenCode **1.x** provider plugin for [RuRout](https://rurout.ru) — your gatewa
 
 - New `RuRout` provider in the OpenCode model picker, next to the built-ins.
 - Model list discovered live from `GET /v1/models` with the active key — each client sees exactly the models that key allows.
-- Provider and model names include the admin-given key name from `GET /v1/sub2api/billing` (e.g. `RuRout Germes`).
+- The provider label includes the admin-given key name from `GET /v1/sub2api/billing` (e.g. `RuRout Germes`). Model names from the server are kept unchanged.
 - `/connect rurout` stores the key in OpenCode's auth system.
-- The active key is checked on startup and hourly without a restart. A successful refresh replaces the list, including removing models unavailable to the key. Stale `~/.cache/opencode-rurout/models-*.json` files are deleted on startup.
+- Every invocation of the V1 `config` hook fetches current metadata and replaces the model list, including removing models unavailable to the key. V1 caches configuration: restart OpenCode after changes to keys, models, prices or limits. There is no background config-write/reload loop. Stale `~/.cache/opencode-rurout/models-*.json` files are deleted on startup.
 
 ## Install (OpenCode 1.x only)
 
@@ -75,6 +75,14 @@ export RUROUT_API_KEY=sk-...
 opencode
 ```
 
+Credential precedence for discovery, provider requests and the image tool is:
+provider `options.apiKey` (also accepted: `api_key`, `key`, `token`), then stored
+`rurout` auth with `type: "api"`, then `RUROUT_API_KEY`. The read-only stored-auth
+adapter reads `OPENCODE_AUTH_CONTENT` when set; otherwise it reads
+`$XDG_DATA_HOME/opencode/auth.json`, or `~/.local/share/opencode/auth.json` when
+`XDG_DATA_HOME` is unset/not absolute. It does not import OpenCode globals, write
+auth files or log credentials. Restart after `/connect` or credential changes.
+
 ## Custom gateway address
 
 ```sh
@@ -92,6 +100,41 @@ failover.
 ## How it works
 
 The v1 `config` hook registers the `rurout` provider with `@ai-sdk/openai-compatible`, fetches `GET /v1/models` with the active key, preserves the exact IDs returned by the gateway, and fills in context/pricing metadata. The `auth` hook adds `/connect rurout`.
+
+### API-first metadata, per-field fallback
+
+The inventory and request IDs come **only** from `/v1/models`: no catalog entries
+are added and no preview/thinking/tier/date variants are collapsed. Nonempty
+`display_name`, then `name`, are authoritative and preserved verbatim. Only when
+both are absent/invalid does the existing ID-based display-label fallback apply.
+The billing key label affects the provider label, never the model name.
+
+Each valid API field overrides its fallback independently, even for new model
+IDs. The existing local table and capability heuristics remain secondary for
+missing, null or invalid fields; a partially described model is not excluded.
+Supported fields are:
+
+- `context_window`, `max_input_tokens`, `max_output_tokens`: positive safe integer
+  token counts. Usual context aliases `context_length`, `max_context_length` and
+  `limit.context/input/output` are also accepted. Input is omitted if unknown;
+  input/output ceilings above the context are clamped to it. A valid context is
+  not replaced by a guessed family-specific window.
+- `reasoning`, `supports_tools`: booleans, including explicit `false`.
+- `input_modalities`, `output_modalities`: arrays of `text`, `image`, `audio`,
+  `video`, `pdf`; explicit empty arrays are respected. Attachment capability is
+  derived from non-text input modalities.
+- `supported_reasoning_levels`: nonempty strings in an array, mapped to V1
+  `reasoningEffort` variants when reasoning is enabled; an empty array disables
+  V1's default low/medium/high variants. Variant metadata never rewrites IDs.
+- `pricing: { currency: "USD", unit: "per_token", input_price, output_price,
+  cache_read_price, cache_write_price }`: each price must be a finite nonnegative
+  number. Valid values are multiplied by 1,000,000 for OpenCode's USD-per-million
+  costs. Zero is preserved. Missing prices fall back individually. Other
+  currencies, missing/unknown units, alternate `cost` objects and numeric strings
+  are not guessed or converted.
+
+Metadata is kept in memory, not written back into `opencode.json`. This plugin
+does not add auto-compaction logic; OpenCode uses the supplied model limits.
 
 ## Build the release archive
 

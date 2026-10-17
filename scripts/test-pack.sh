@@ -110,7 +110,8 @@ try {
   assert.equal(typeof hooks.tool.generate_image.execute, "function");
   assert.equal(hooks.tool.generate_image.args.prompt.parse("offline smoke"), "offline smoke");
 } finally {
-  await hooks.dispose();
+  // V1 no longer owns an hourly timer or writes config to refresh discovery.
+  if (hooks.dispose) await hooks.dispose();
 }
 NODE
 )
