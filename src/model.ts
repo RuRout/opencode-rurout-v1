@@ -1,5 +1,5 @@
 import type { GatewayModel } from "./discovery.js";
-import { displayName, familyOf, isImage, isReasoning, lookup, supportsVision } from "./fallback.js";
+import { displayName, effortLevels, familyOf, isImage, isReasoning, lookup, supportsVision } from "./fallback.js";
 
 const MODALITIES = ["text", "audio", "image", "video", "pdf"] as const;
 type Modality = (typeof MODALITIES)[number];
@@ -82,8 +82,11 @@ export function toV1Model(entry: GatewayModel): V1Model {
     // A smaller context clamps separate input/output ceilings, not vice versa.
     limit: { context, output, ...(input !== undefined ? { input: Math.min(input, context) } : {}) },
   };
-  const levels = entry.supported_reasoning_levels;
-  if (Array.isArray(levels) && levels.every((level) => nonempty(level) !== undefined)) {
+  const supplied = entry.supported_reasoning_levels;
+  const levels = Array.isArray(supplied) && supplied.every((level) => nonempty(level) !== undefined)
+    ? supplied as string[]
+    : reasoning ? effortLevels(entry.id) : undefined;
+  if (levels) {
     const enabled = reasoning ? new Set<string>(levels) : new Set<string>();
     // V1 auto-generates these defaults. Disable absent ones rather than inventing support.
     model.variants = Object.fromEntries([
