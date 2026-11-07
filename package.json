@@ -35,6 +35,10 @@
   "dependencies": {
     "@opencode-ai/plugin": "^1.18.31"
   },
+  "overrides": {
+    "toml": "^5.0.1",
+    "zod": "^4.6.7"
+  },
   "devDependencies": {
     "@opencode-ai/sdk": "^1.18.31",
     "@types/node": "^22.0.0",
