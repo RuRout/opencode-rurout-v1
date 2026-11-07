@@ -125,7 +125,10 @@ Supported fields are:
   derived from non-text input modalities.
 - `supported_reasoning_levels`: nonempty strings in an array, mapped to V1
   `reasoningEffort` variants when reasoning is enabled; an empty array disables
-  V1's default low/medium/high variants. Variant metadata never rewrites IDs.
+  V1's default low/medium/high variants. When the field is missing or invalid,
+  models with an official effort scale (GPT-5.6, GPT-6, Grok 4.x and current
+  Claude) offer the values their vendor API accepts, including `none`, `xhigh`
+  and `max` where supported. Variant metadata never rewrites IDs.
 - `pricing: { currency: "USD", unit: "per_token", input_price, output_price,
   cache_read_price, cache_write_price }`: each price must be a finite nonnegative
   number. Valid values are multiplied by 1,000,000 for OpenCode's USD-per-million
