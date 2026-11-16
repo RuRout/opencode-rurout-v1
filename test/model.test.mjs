@@ -127,3 +127,21 @@ test("invalid reasoning levels fall back without enabling made-up variants", () 
     assert.equal(toV1Model({ id: "unknown", supported_reasoning_levels: levels }).variants, undefined);
   }
 });
+
+test("current Claude models without API limits get their 1M window, not the 200K default", () => {
+  // Regression: these IDs were missing from the table, so OpenCode showed and
+  // compacted at the 200K unknown-model default while the gateway serves 1M.
+  for (const id of [
+    "claude-opus-4-7", "claude-opus-4-8", "claude-opus-5", "claude-opus-5-5",
+    "claude-sonnet-4-6", "claude-sonnet-5", "claude-sonnet-5-5", "claude-haiku-5-5",
+    "claude-fable-5", "claude-fable-5-1", "claude-fable-5-2", "claude-opus-5-5-thinking",
+  ]) {
+    assert.deepEqual(toV1Model({ id }).limit, { context: 1000000, output: 128000 }, id);
+  }
+  assert.deepEqual(toV1Model({ id: "claude-opus-5-5" }).cost, { input: 4, output: 20, cache_read: 0.2, cache_write: 0 });
+  assert.deepEqual(toV1Model({ id: "claude-fable-5-2" }).cost, { input: 8, output: 40, cache_read: 0.2, cache_write: 0 });
+  // API-supplied limits still win over the table.
+  assert.deepEqual(toV1Model({ id: "claude-opus-5-5", context_window: 300000, max_output_tokens: 64000 }).limit,
+    { context: 300000, output: 64000 });
+  assert.deepEqual(toV1Model({ id: "claude-haiku-4-5-20251001" }).limit, { context: 200000, output: 64000 });
+});
