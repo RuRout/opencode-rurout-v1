@@ -58,6 +58,8 @@ test("config-time stored auth discovers before the auth loader and refreshes wit
   assert.equal(config.provider.rurout.models["vendor/new-low"].limit.context, 987654);
   assert.equal(calls.length, 4);
   assert.ok(calls.every((call) => call.auth === "Bearer stored"));
-  assert.deepEqual(await hooks.auth.loader(async () => ({ type: "api", key: "different" }), config.provider.rurout),
-    { apiKey: "stored" });
+  const loaded = await hooks.auth.loader(async () => ({ type: "api", key: "different" }), config.provider.rurout);
+  assert.equal(loaded.apiKey, "stored");
+  assert.equal(typeof loaded.fetch, "function");
+  assert.deepEqual(Object.keys(loaded).sort(), ["apiKey", "fetch"]);
 });
