@@ -2,9 +2,11 @@ import type { AuthHook, Config, Hooks, PluginInput } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin/tool";
 import {
   DEFAULT_BASE_URLS,
+  DOMAIN_SUSPECT_MS,
   PROVIDER_ID,
   PROVIDER_NAME,
 } from "./constants.js";
+import { createFailover } from "./failover.js";
 import { fetchGatewayModelsFrom } from "./discovery.js";
 import { purgeLegacyFileCache } from "./cache.js";
 import { toV1Models } from "./model.js";
@@ -96,6 +98,16 @@ async function ruroutPlugin(input: PluginInput, rawOpts?: RuroutOptions): Promis
   // Follows the address that answered discovery, so the image tool uses the
   // same reachable domain as the provider.
   let baseURL = baseURLs[0];
+  // Request-level failover between the default domains (see failover.ts for
+  // which errors may move a request). Off for an explicit address, which is
+  // used as-is; decided in the config hook once the provider config is known.
+  let failoverEnabled = baseURLs === DEFAULT_BASE_URLS;
+  const failover = createFailover({
+    bases: DEFAULT_BASE_URLS,
+    suspectMs: DOMAIN_SUSPECT_MS,
+    enabled: () => failoverEnabled,
+    onSwitch: (from, to) => void log(input, "info", `[rurout] gateway address switched from ${from} to ${to}`),
+  });
   // Last key seen by the auth loader (/connect) and by model discovery, so
   // tools authenticate exactly like the provider does.
   let connectedKey = "";
@@ -117,6 +129,7 @@ async function ruroutPlugin(input: PluginInput, rawOpts?: RuroutOptions): Promis
         configured && !DEFAULT_BASE_URLS.includes(configured) ? [configured] : baseURLs;
       options.baseURL = candidates[0];
       baseURL = candidates[0];
+      failoverEnabled = candidates === baseURLs && baseURLs === DEFAULT_BASE_URLS;
       const provider: AnyRecord = {
         ...existing,
         npm: "@ai-sdk/openai-compatible",
@@ -143,6 +156,9 @@ async function ruroutPlugin(input: PluginInput, rawOpts?: RuroutOptions): Promis
       }
       options.baseURL = built.baseURL;
       baseURL = built.baseURL;
+      // Domains tried before the reachable one just failed: start requests
+      // on the one that answered.
+      if (failoverEnabled) failover.noteDiscovery(built.baseURL);
       provider.name = built.keyLabel ? `RuRout ${built.keyLabel}` : PROVIDER_NAME;
       provider.models = built.models;
       await log(input, "info", `[rurout] discovered ${Object.keys(built.models).length} models`);
@@ -177,7 +193,9 @@ async function ruroutPlugin(input: PluginInput, rawOpts?: RuroutOptions): Promis
             || normalizeKey(process.env.RUROUT_API_KEY);
           if (key) {
             connectedKey = key;
-            return { apiKey: key };
+            // `fetch` is the provider's transport hook: requests may move to
+            // another default domain, but only when they never left this machine.
+            return { apiKey: key, fetch: failover.fetch };
           }
           return {};
         } catch {
@@ -208,7 +226,7 @@ async function ruroutPlugin(input: PluginInput, rawOpts?: RuroutOptions): Promis
           const endpoint = baseURL.endsWith("/v1")
             ? `${baseURL}/images/generations`
             : `${baseURL}/v1/images/generations`;
-          const res = await fetch(endpoint, {
+          const res = await failover.fetch(endpoint, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
