@@ -89,13 +89,36 @@ auth files or log credentials. Restart after `/connect` or credential changes.
 export RUROUT_BASE_URL=https://rurout.ru/v1
 ```
 
-By default the plugin tries `https://rurout.ru/v1` and, if that address is
-unreachable (for example a VPN or network blocks the domain), falls back to
-`https://rurout.online/v1`; chat and image requests then use whichever address
-answered. Existing installations using `https://rurout.online:9443/v1` may keep
+By default the plugin uses the domains in this order: `https://rurout.com/v1`
+(primary), `https://rurout.ru/v1`, `https://rurout.online/v1` (reserves, same
+gateway). Existing installations using `https://rurout.online:9443/v1` may keep
 it via `RUROUT_BASE_URL`. An explicit address (`RUROUT_BASE_URL` or a provider
 `baseURL` that is not one of the default domains) is used as-is, without
 failover.
+
+### Failover between domains
+
+- **Discovery** (every `config` hook run) tries the domains in order and the
+  provider starts on the first one that answers.
+- **Requests** go through a fetch wrapper that the `auth` loader hands to the
+  provider (so it is active when the key is stored with `/connect rurout`).
+  The wrapper remembers the working domain: if the current one stops being
+  reachable in the middle of a session, the next request moves to the next
+  domain without restarting OpenCode. The image tool uses the same wrapper.
+- **A request is replayed on another domain only if it provably never left
+  this machine**: DNS failure (`ENOTFOUND`, `EAI_AGAIN`), connection refused or
+  unreachable, connect timeout, TLS handshake or certificate failure. Requests
+  are billed, so everything else is returned as-is and never replayed: any HTTP
+  answer (including 4xx/5xx), a connection reset or timeout after the request
+  may have been sent, a request with a streamed body, and a cancellation by the
+  user. Such a failure only marks the domain as suspect, so the *next* request
+  starts on another domain.
+- A failed domain is tried last for 5 minutes, then the primary order resumes;
+  a successful answer clears the mark immediately. Each request makes at most
+  one attempt per domain, with no sleeps or retry loops.
+- With the key supplied only through `RUROUT_API_KEY` or provider options (no
+  `/connect`), OpenCode does not call the `auth` loader, so only discovery
+  fails over; store the key with `/connect rurout` for request failover.
 
 ## How it works
 
